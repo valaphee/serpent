@@ -1,8 +1,12 @@
 use std::intrinsics::volatile_load;
+use std::io::Read;
+use std::io::Write;
+use std::mem::MaybeUninit;
 
+pub use windows_sys::Win32::Foundation::{HMODULE};
 use byteorder::{LittleEndian, ReadBytesExt};
 use windows_sys::core::PCSTR;
-use windows_sys::Win32::Foundation::{BOOL, HMODULE};
+use windows_sys::Win32::Foundation::{BOOL, MAX_PATH};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_DIRECTORY_ENTRY_IAT,
     IMAGE_DIRECTORY_ENTRY_IMPORT,
@@ -132,7 +136,10 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
     );
 
     // Go through all exports
-    for (&name, &name_ordinal) in names.iter().zip(name_ordinals) {
+    for i in 0..names.len() {
+        let name = names[i];
+        let name_ordinal = name_ordinals[i];
+    /*for (&name, &name_ordinal) in names.iter().zip(name_ordinals) {*/
         let name = (module + name as isize) as *const u8;
         let mut name_end = name;
         while *name_end != 0 {
@@ -157,9 +164,30 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                         + export_data_directory.Size) as usize,
                 );
                 let forward_module_name_length = function.iter().position(|&c| c == b'.').unwrap();
+
                 let forward_module =
                     get_module_without_extension(fnv1a_ci(&function[..forward_module_name_length]))
-                        .unwrap();
+                        .unwrap_or_else(|| {
+                            let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
+                            let load_library_a: LoadLibraryA = std::mem::transmute(
+                                get_function(
+                                    kernel32,
+                                    fnv1a_ci(b"LoadLibraryA"),
+                                )
+                                    .unwrap(),
+                            );
+                            let mut constformat: [u8; MAX_PATH as usize] = MaybeUninit::uninit().assume_init();
+                            for n in 0..forward_module_name_length {
+                                constformat[n] = function[n];
+                            }
+                            constformat[forward_module_name_length] = b'.';
+                            constformat[forward_module_name_length+1] = b'd';
+                            constformat[forward_module_name_length+2] = b'l';
+                            constformat[forward_module_name_length+3] = b'l';
+                            //write!(constformat.as_mut_slice(), "{}.dll\0", std::str::from_utf8(&function[..forward_module_name_length]).unwrap()).unwrap();
+                            load_library_a(constformat.as_ptr())
+                        });
+                //println!("{} {forward_module}", std::str::from_utf8(&function[..forward_module_name_length + 1]).unwrap());
                 let forward_function_name_length = function.iter().position(|&c| c == 0).unwrap();
                 let forward_function = get_function(
                     forward_module,
@@ -167,7 +195,7 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                         &function[forward_module_name_length + 1..forward_function_name_length],
                     ),
                 )
-                .unwrap();
+                    .unwrap();
                 return Some(forward_function);
             } else {
                 return Some(function);
@@ -215,7 +243,7 @@ pub unsafe extern "system" fn import_obfuscation_v1(
     let import_data_directory = &*(&nt_headers.OptionalHeader.DataDirectory
         [IMAGE_DIRECTORY_ENTRY_IMPORT as usize]
         as *const IMAGE_DATA_DIRECTORY);
-    let mut import_directory = std::slice::from_raw_parts_mut(
+    let mut import_directory = std::slice::from_raw_parts(
         (module + import_data_directory.VirtualAddress as isize + 20) as *mut u8,
         nt_headers.OptionalHeader.SizeOfImage as usize,
     );
@@ -253,11 +281,11 @@ pub unsafe extern "system" fn import_obfuscation_v1(
             }
             _ => {
                 let (xor_val, remaining) =
-                    import_directory.split_at_mut(module_name_length as usize + 1);
+                    import_directory.split_at(module_name_length as usize + 1);
                 import_directory = remaining;
 
                 let xor_val_mut =
-                    std::slice::from_raw_parts_mut(xor_val.as_mut_ptr() as *mut u8, xor_val.len());
+                    std::slice::from_raw_parts_mut(xor_val.as_ptr() as *mut u8, xor_val.len());
                 let xor_key = *xor_val_mut.last().unwrap();
                 for c in xor_val_mut {
                     *c ^= xor_key;

@@ -1,0 +1,12 @@
+[package]
+name = "serpent_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+byteorder = "1.5"
+memmap2 = "0.9"
+object = { version = "0.32", features = ["pe", "read_core", "write_std"], default-features = false }
+rand = "0.8"
+
+serpent = { path = ".." }
