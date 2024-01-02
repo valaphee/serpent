@@ -49,6 +49,7 @@ pub fn get_module(module_hash: u32) -> Option<HMODULE> {
                 return Some(ldr_data_table_entry.Reserved2[0] as isize);
             }
 
+            // Get next module in list
             ldr_in_memory_order_module_list_entry = (*ldr_in_memory_order_module_list_entry).Flink
         }
 
@@ -76,6 +77,7 @@ pub fn get_module_without_extension(module_hash: u32) -> Option<HMODULE> {
             let ldr_data_table_entry =
                 &*(ldr_in_memory_order_module_list_entry as *const LDR_DATA_TABLE_ENTRY);
 
+            // TODO: correctly remove extension
             let name = if ldr_data_table_entry.FullDllName.Length <= 4 {
                 &[]
             } else {
@@ -89,6 +91,7 @@ pub fn get_module_without_extension(module_hash: u32) -> Option<HMODULE> {
                 return Some(ldr_data_table_entry.Reserved2[0] as isize);
             }
 
+            // Get next module in list
             ldr_in_memory_order_module_list_entry = (*ldr_in_memory_order_module_list_entry).Flink
         }
 
@@ -117,12 +120,12 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
     #[cfg(target_arch = "x86_64")]
     let nt_headers = &*((module + dos_headers.e_lfanew as isize)
         as *const windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64);
+
     let export_data_directory = &*(&nt_headers.OptionalHeader.DataDirectory
         [IMAGE_DIRECTORY_ENTRY_EXPORT as usize]
         as *const IMAGE_DATA_DIRECTORY);
     let export_directory = &*((module + export_data_directory.VirtualAddress as isize)
         as *const IMAGE_EXPORT_DIRECTORY);
-
     let function_rvas = slice::from_raw_parts(
         (module + export_directory.AddressOfFunctions as isize) as *const u32,
         export_directory.NumberOfFunctions as usize,
@@ -137,10 +140,9 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
     );
 
     // Iterate through all exported functions
-    for i in 0..function_names_rvas.len() {
-        let function_name_rva = function_names_rvas[i];
-        let function_name_ordinal = function_name_ordinals[i];
-
+    for (&function_name_rva, &function_name_ordinal) in
+        function_names_rvas.iter().zip(function_name_ordinals)
+    {
         // Generate and compare hashes
         let current_function_hash = hash_ci_ptr((module + function_name_rva as isize) as *const u8);
         if current_function_hash == function_hash {
@@ -153,7 +155,7 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                 ..export_data_directory.VirtualAddress + export_data_directory.Size)
                 .contains(&function_rva)
             {
-                let mut forward_module_name = slice::from_raw_parts(
+                let forward_module_name = slice::from_raw_parts(
                     function as *const u8,
                     (function_rva - export_data_directory.VirtualAddress
                         + export_data_directory.Size) as usize,
@@ -164,11 +166,13 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                     &forward_module_name[..forward_module_name_length],
                 ))
                 .unwrap_or_else(|| {
-                    let load_library_a: LoadLibraryA = mem::transmute(get_function(
+                    let load_library_a: LoadLibraryA = mem::transmute(
+                        get_function(
                             get_module(hash_ci(b"kernel32.dll")).unwrap(),
                             hash_ci(b"LoadLibraryA"),
                         )
-                        .unwrap());
+                        .unwrap(),
+                    );
 
                     let mut forward_module_name_with_extension: [u8; MAX_PATH as usize] =
                         MaybeUninit::uninit().assume_init();
@@ -203,10 +207,10 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
 }
 
 #[no_mangle]
-pub unsafe extern "system" fn import_obfuscation_v1(
+pub unsafe extern "system" fn import(
     DllHandle: *const ffi::c_void,
     dwReason: u32,
-    Reserved: *const ffi::c_void,
+    _Reserved: *const ffi::c_void,
 ) {
     if dwReason != DLL_PROCESS_ATTACH {
         return;
@@ -215,7 +219,8 @@ pub unsafe extern "system" fn import_obfuscation_v1(
     let kernel32 = get_module(hash_ci(b"kernel32.dll")).unwrap();
     let virtual_protect: VirtualProtect =
         mem::transmute(get_function(kernel32, hash_ci(b"VirtualProtect")).unwrap());
-    let load_library_a: LoadLibraryA = mem::transmute(get_function(kernel32, hash_ci(b"LoadLibraryA")).unwrap());
+    let load_library_a: LoadLibraryA =
+        mem::transmute(get_function(kernel32, hash_ci(b"LoadLibraryA")).unwrap());
 
     let module = DllHandle as HMODULE;
     let dos_headers = &*(module as *const IMAGE_DOS_HEADER);
@@ -225,6 +230,7 @@ pub unsafe extern "system" fn import_obfuscation_v1(
     #[cfg(target_arch = "x86_64")]
     let nt_headers = &*((module + dos_headers.e_lfanew as isize)
         as *const windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64);
+
     let import_data_directory = &*(&nt_headers.OptionalHeader.DataDirectory
         [IMAGE_DIRECTORY_ENTRY_IMPORT as usize]
         as *const IMAGE_DATA_DIRECTORY);
@@ -232,10 +238,11 @@ pub unsafe extern "system" fn import_obfuscation_v1(
         (module + import_data_directory.VirtualAddress as isize + 20) as *mut u8,
         nt_headers.OptionalHeader.SizeOfImage as usize,
     );
+
     let iat_data_directory = &*(&nt_headers.OptionalHeader.DataDirectory
         [IMAGE_DIRECTORY_ENTRY_IAT as usize]
         as *const IMAGE_DATA_DIRECTORY);
-    let mut iat_directory = slice::from_raw_parts_mut(
+    let iat_directory = slice::from_raw_parts_mut(
         (module + iat_data_directory.VirtualAddress as isize) as *mut u64,
         iat_data_directory.Size as usize,
     );
@@ -285,7 +292,8 @@ pub unsafe extern "system" fn import_obfuscation_v1(
                 break;
             }
 
-            iat_directory[iat_directory_entry] = mem::transmute(get_function(module, function_hash).unwrap());
+            iat_directory[iat_directory_entry] =
+                mem::transmute(get_function(module, function_hash).unwrap());
             iat_directory_entry += 1;
         }
         iat_directory_entry += 1;
@@ -314,6 +322,20 @@ pub unsafe extern "system" fn import_obfuscation_v1(
     }
     #[cfg(not(target_env = "msvc"))]
     unsafe fn reference_tls_used() {}
+}
+
+#[macro_export]
+macro_rules! import {
+    () => {
+        #[link_section = ".CRT$XLB"]
+        #[allow(dead_code, unused_variables)]
+        #[used]
+        static p_thread_callback: unsafe extern "system" fn(
+            *const core::ffi::c_void,
+            u32,
+            *const core::ffi::c_void,
+        ) = serpent::import::import;
+    };
 }
 
 type VirtualProtect = unsafe extern "system" fn(

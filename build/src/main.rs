@@ -1,6 +1,6 @@
 use std::{fs::OpenOptions, io::Write};
 
-use crate::import::import_obfuscation_v1;
+use crate::import::obfuscate_imports;
 
 pub mod import;
 pub mod string;
@@ -13,6 +13,6 @@ fn main() {
         .open(path)
         .unwrap();
     let mut mmap = unsafe { memmap2::MmapMut::map_mut(&file) }.unwrap();
-    import_obfuscation_v1(&mut mmap[..]);
+    obfuscate_imports(&mut mmap[..]);
     mmap.flush().unwrap();
 }

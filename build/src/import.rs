@@ -14,13 +14,14 @@ use rand::Rng;
 
 use serpent::hash::hash_ci;
 
-use crate::string::string_obfuscation_v1;
+use crate::string::obfuscate_string;
 
-pub fn import_obfuscation_v1(in_place: &mut [u8]) {
-    let mut replace = vec![0; 20];
+pub fn obfuscate_imports(in_place: &mut [u8]) {
+    let mut new_import_directory = vec![0; 20];
     let mut wipe = vec![];
-    let import_directory;
-    let import_address_table_directory;
+
+    let import_data_directory;
+    let iat_data_directory;
     {
         let input = &in_place[..];
         let dos_header = ImageDosHeader::parse(input).unwrap();
@@ -30,118 +31,124 @@ pub fn import_obfuscation_v1(in_place: &mut [u8]) {
         let file_header = nt_headers.file_header();
         let sections = file_header.sections(input, nt_header_offset).unwrap();
 
-        import_directory = data_directories
+        import_data_directory = data_directories
             .get(IMAGE_DIRECTORY_ENTRY_IMPORT)
             .unwrap()
             .file_range(&sections)
             .unwrap();
-        import_address_table_directory = data_directories
+        iat_data_directory = data_directories
             .get(IMAGE_DIRECTORY_ENTRY_IAT)
             .unwrap()
             .file_range(&sections)
             .unwrap();
 
-        let mut import_descriptor: &ImageImportDescriptor = unsafe {
-            &*((&input[import_directory.0 as usize..][..import_directory.1 as usize]).as_ptr()
-                as *const _)
+        wipe.push(
+            iat_data_directory.0 as usize..(iat_data_directory.0 + iat_data_directory.1) as usize,
+        );
+
+        // Iterate through all imports to wipe the names and map module names to
+        // functions
+        let mut module: &ImageImportDescriptor = unsafe {
+            &*((&input[import_data_directory.0 as usize..][..import_data_directory.1 as usize])
+                .as_ptr() as *const _)
         };
-        let mut iat_table = &input[import_address_table_directory.0 as usize..]
-            [..import_address_table_directory.1 as usize];
-        let mut lap_ranges: Vec<(usize, &str)> = Vec::new();
-
-        while !import_descriptor.is_null() {
-            let (name_offset, _) = sections
-                .pe_file_range_at(import_descriptor.name.get(LittleEndian))
+        let mut function_module_names: Vec<(usize, &str)> = Vec::new();
+        while !module.is_null() {
+            let (module_name_offset, _) = sections
+                .pe_file_range_at(module.name.get(LittleEndian))
                 .unwrap();
-            let name_offset = name_offset as usize;
-            let name_length = input[name_offset..].iter().position(|&c| c == 0).unwrap();
-            let name = &input[name_offset..][..name_length];
-            /*println!("Module {}", std::str::from_utf8(name).unwrap());
-            match name {
-                b"ntdll.dll" | b"kernel32.dll" => {
-                    replace.push(0xFF - 1);
-                    replace.extend_from_slice(&fnv1a_ci(name).to_le_bytes());
-                }
-                _ => {
-                    replace.push(0xFF - name_length as u8);
-                    replace.extend_from_slice(&string_obfuscation_v1(&input[name_offset..]));
-                }
-            }*/
-            wipe.push(name_offset..name_offset + name_length + 1);
-
-            let (thunk_offset, _) = sections
-                .pe_file_range_at(import_descriptor.original_first_thunk.get(LittleEndian))
+            let module_name_offset = module_name_offset as usize;
+            let module_name_length = input[module_name_offset..]
+                .iter()
+                .position(|&c| c == 0)
                 .unwrap();
-            let mut thunk = unsafe { &*((&input[thunk_offset as usize..]).as_ptr() as *const u64) };
-            while *thunk != 0 {
-                lap_ranges.push((*thunk as usize, std::str::from_utf8(name).unwrap()));
+            let module_name = &input[module_name_offset..][..module_name_length];
+            wipe.push(module_name_offset..module_name_offset + module_name_length + 1);
 
-                let (name_offset, _) = sections.pe_file_range_at(*thunk as u32).unwrap();
-                let name_offset = name_offset as usize;
-                let name_length = input[name_offset + 2..]
+            // Iterate through all functions
+            let (function_offset, _) = sections
+                .pe_file_range_at(module.original_first_thunk.get(LittleEndian))
+                .unwrap();
+            let mut function_rva =
+                unsafe { &*((&input[function_offset as usize..]).as_ptr() as *const u64) };
+            while *function_rva != 0 {
+                function_module_names.push((
+                    *function_rva as usize,
+                    std::str::from_utf8(module_name).unwrap(),
+                ));
+
+                let (function_name_offset, _) =
+                    sections.pe_file_range_at(*function_rva as u32).unwrap();
+                let function_name_offset = function_name_offset as usize;
+                let function_name_length = input[function_name_offset + 2..]
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap();
-                let name = &input[name_offset + 2..][..name_length];
-                //println!("Function {} {:08X}", std::str::from_utf8(name).unwrap(),
-                // fnv1a_ci(name)); replace.extend_from_slice(&fnv1a_ci(name).
-                // to_le_bytes());
-                wipe.push(name_offset..name_offset + name_length + 3);
+                wipe.push(function_name_offset..function_name_offset + function_name_length + 3);
 
-                thunk = unsafe { &*(thunk as *const u64).add(1) };
+                // Next function
+                function_rva = unsafe { &*(function_rva as *const u64).add(1) };
             }
-            //replace.extend_from_slice(&0u32.to_le_bytes());
 
-            import_descriptor =
-                unsafe { &*(import_descriptor as *const ImageImportDescriptor).add(1) };
+            // Next module
+            module = unsafe { &*(module as *const ImageImportDescriptor).add(1) };
         }
 
-        while !iat_table.is_empty() {
-            let mut addr = iat_table.read_u64::<byteorder::LittleEndian>().unwrap();
-            let lap_range = lap_ranges
+        // Iterate through all modules
+        let mut iat_directory =
+            &input[iat_data_directory.0 as usize..][..iat_data_directory.1 as usize];
+        while !iat_directory.is_empty() {
+            let mut function_rva = iat_directory.read_u64::<byteorder::LittleEndian>().unwrap();
+            let module_name = function_module_names
                 .iter()
-                .find(|&lap_range| lap_range.0 == addr as usize)
-                .unwrap();
-            let name = lap_range.1;
-            println!("Module {}", name);
-            match name {
+                .find(|(other_function_rva, _)| *other_function_rva == function_rva as usize)
+                .unwrap()
+                .1;
+            println!("Module {}", module_name);
+
+            // Write module hash if its an always-loaded module or obfuscated name
+            match module_name {
                 "ntdll.dll" | "kernel32.dll" => {
-                    replace.push(0xFF - 1);
-                    replace.extend_from_slice(&hash_ci(name.as_bytes()).to_le_bytes());
+                    new_import_directory.push(0xFF - 1);
+                    new_import_directory
+                        .extend_from_slice(&hash_ci(module_name.as_bytes()).to_le_bytes());
                 }
                 _ => {
-                    replace.push(0xFF - name.len() as u8);
-                    replace.extend_from_slice(&string_obfuscation_v1(name));
+                    new_import_directory.push(0xFF - module_name.len() as u8);
+                    new_import_directory.extend_from_slice(&obfuscate_string(module_name));
                 }
             }
-            while addr != 0 {
-                let (name_offset, _) = sections.pe_file_range_at(addr as u32).unwrap();
-                let name_offset = name_offset as usize;
-                let name_length = input[name_offset + 2..]
+
+            // Iterate through all functions
+            while function_rva != 0 {
+                let (function_name_offset, _) =
+                    sections.pe_file_range_at(function_rva as u32).unwrap();
+                let function_name_offset = function_name_offset as usize;
+                let function_name_length = input[function_name_offset + 2..]
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap();
-                let name = &input[name_offset + 2..][..name_length];
+                let function_name = &input[function_name_offset + 2..][..function_name_length];
                 println!(
                     "Function {} {:08X}",
-                    std::str::from_utf8(name).unwrap(),
-                    hash_ci(name)
+                    std::str::from_utf8(function_name).unwrap(),
+                    hash_ci(function_name)
                 );
-                replace.extend_from_slice(&hash_ci(name).to_le_bytes());
+                new_import_directory.extend_from_slice(&hash_ci(function_name).to_le_bytes());
 
-                addr = iat_table.read_u64::<byteorder::LittleEndian>().unwrap();
+                function_rva = iat_directory.read_u64::<byteorder::LittleEndian>().unwrap();
             }
-            replace.extend_from_slice(&0u32.to_le_bytes());
+            new_import_directory.extend_from_slice(&0u32.to_le_bytes());
         }
 
-        replace.push(0xFF);
+        new_import_directory.push(0xFF);
     }
 
     let mut rng = rand::thread_rng();
-    let mut import_directory = &mut in_place[import_directory.0 as usize..]
-        [..(import_directory.1 + import_address_table_directory.1) as usize];
+    let mut import_directory = &mut in_place[import_data_directory.0 as usize..]
+        [..(import_data_directory.1 + iat_data_directory.1) as usize];
     import_directory.fill_with(|| rng.gen());
-    import_directory.write_all(&replace).unwrap();
+    import_directory.write_all(&new_import_directory).unwrap();
     for wipe in wipe {
         in_place[wipe].fill_with(|| rng.gen());
     }
