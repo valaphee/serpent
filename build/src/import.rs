@@ -1,11 +1,19 @@
 use std::io::Write;
+
 use byteorder::ReadBytesExt;
-use object::coff::CoffHeader;
-use object::LittleEndian;
-use object::pe::{IMAGE_DIRECTORY_ENTRY_IAT, IMAGE_DIRECTORY_ENTRY_IMPORT, ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64};
-use object::read::pe::ImageNtHeaders;
+use object::{
+    coff::CoffHeader,
+    pe::{
+        ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64, IMAGE_DIRECTORY_ENTRY_IAT,
+        IMAGE_DIRECTORY_ENTRY_IMPORT,
+    },
+    read::pe::ImageNtHeaders,
+    LittleEndian,
+};
 use rand::Rng;
+
 use serpent::hash::hash_ci;
+
 use crate::string::string_obfuscation_v1;
 
 pub fn import_obfuscation_v1(in_place: &mut [u8]) {

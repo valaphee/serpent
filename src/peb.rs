@@ -1,4 +1,4 @@
-use std::arch::asm;
+use core::{arch, ffi};
 
 use windows_sys::Win32::{
     Foundation::UNICODE_STRING,
@@ -15,13 +15,13 @@ pub fn get_peb() -> &'static PEB {
     unsafe {
         let peb: *const PEB;
         #[cfg(target_arch = "x86")]
-        asm!(
+        arch::asm!(
         "mov {}, fs:[0x30]",
         lateout(reg) peb,
         options(pure, nomem, preserves_flags, nostack),
         );
         #[cfg(target_arch = "x86_64")]
-        asm!(
+        arch::asm!(
         "mov {}, gs:[0x60]",
         lateout(reg) peb,
         options(pure, nomem, preserves_flags, nostack),
@@ -40,29 +40,29 @@ pub struct PEB {
     pub ReadImageFileExecOptions: u8,
     pub BeingDebugged: u8,
     pub BitField: u8,
-    pub Mutant: *mut std::ffi::c_void,
-    pub ImageBaseAddress: *mut std::ffi::c_void,
+    pub Mutant: *mut ffi::c_void,
+    pub ImageBaseAddress: *mut ffi::c_void,
     pub Ldr: *mut PEB_LDR_DATA,
     pub ProcessParameters: *mut RTL_USER_PROCESS_PARAMETERS,
-    pub SubSystemData: *mut std::ffi::c_void,
-    pub ProcessHeap: *mut std::ffi::c_void,
-    pub FastPebLock: *mut std::ffi::c_void,
-    pub AtlThunkSListPtr: *mut std::ffi::c_void,
-    pub IFEOKey: *mut std::ffi::c_void,
+    pub SubSystemData: *mut ffi::c_void,
+    pub ProcessHeap: *mut ffi::c_void,
+    pub FastPebLock: *mut ffi::c_void,
+    pub AtlThunkSListPtr: *mut ffi::c_void,
+    pub IFEOKey: *mut ffi::c_void,
     pub CrossProcessFlags: u32,
-    pub KernelCallbackTable: *mut std::ffi::c_void,
+    pub KernelCallbackTable: *mut ffi::c_void,
     pub SystemReserved: u32,
     pub AtlThunkSListPtr32: u32,
-    pub ApiSetMap: *mut std::ffi::c_void,
+    pub ApiSetMap: *mut ffi::c_void,
     pub TlsExpansionCounter: u32,
-    pub TlsBitmap: *mut std::ffi::c_void,
+    pub TlsBitmap: *mut ffi::c_void,
     pub TlsBitmapBits: [u32; 2],
-    pub ReadOnlySharedMemoryBase: *mut std::ffi::c_void,
-    pub SharedData: *mut std::ffi::c_void,
-    pub ReadOnlyStaticServerData: *mut std::ffi::c_void,
-    pub AnsiCodePageData: *mut std::ffi::c_void,
-    pub OemCodePageData: *mut std::ffi::c_void,
-    pub UnicodeCaseTableData: *mut std::ffi::c_void,
+    pub ReadOnlySharedMemoryBase: *mut ffi::c_void,
+    pub SharedData: *mut ffi::c_void,
+    pub ReadOnlyStaticServerData: *mut ffi::c_void,
+    pub AnsiCodePageData: *mut ffi::c_void,
+    pub OemCodePageData: *mut ffi::c_void,
+    pub UnicodeCaseTableData: *mut ffi::c_void,
     pub NumberOfProcessors: u32,
     pub NtGlobalFlag: u32,
     pub CriticalSectionTimeout: u64,
@@ -73,10 +73,10 @@ pub struct PEB {
     pub NumberOfHeaps: u32,
     pub MaximumNumberOfHeaps: u32,
     pub ProcessHeaps: usize,
-    pub GdiSharedHandleTable: *mut std::ffi::c_void,
-    pub ProcessStarterHelper: *mut std::ffi::c_void,
+    pub GdiSharedHandleTable: *mut ffi::c_void,
+    pub ProcessStarterHelper: *mut ffi::c_void,
     pub GdiDCAttributeList: u32,
-    pub LoaderLock: *mut std::ffi::c_void,
+    pub LoaderLock: *mut ffi::c_void,
     pub OSSMajorVersion: u32,
     pub OSMinorVersion: u32,
     pub OSBuildNumber: u16,
@@ -88,7 +88,7 @@ pub struct PEB {
     pub ActiveProcessAffinityMask: u64,
     pub GdiHandleBuffer: [u32; 0x3C],
     pub PostProcessInitRoutine: PPS_POST_PROCESS_INIT_ROUTINE,
-    pub TlsExpansionBitmap: *mut std::ffi::c_void,
+    pub TlsExpansionBitmap: *mut ffi::c_void,
     pub TlsExpansionBitmapBits: [u32; 0x20],
     pub SessionId: u32,
 }
@@ -99,16 +99,16 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub Length: u32,
     pub Flags: u32,
     pub DebugFlags: u32,
-    pub ConsoleHandle: *mut std::ffi::c_void,
+    pub ConsoleHandle: *mut ffi::c_void,
     pub ConsoleFlags: u32,
-    pub StandardInput: *mut std::ffi::c_void,
-    pub StandardOutput: *mut std::ffi::c_void,
-    pub StandardError: *mut std::ffi::c_void,
+    pub StandardInput: *mut ffi::c_void,
+    pub StandardOutput: *mut ffi::c_void,
+    pub StandardError: *mut ffi::c_void,
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,
     pub CommandLine: UNICODE_STRING,
-    pub Environment: *mut std::ffi::c_void,
+    pub Environment: *mut ffi::c_void,
     pub StartingX: u32,
     pub StartingY: u32,
     pub CountX: u32,
@@ -125,7 +125,7 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub CurrentDirectories: [RTL_DRIVE_LETTER_CURDIR; 0x20],
     pub EnvironmentSize: usize,
     pub EnvironmentVersion: usize,
-    pub PackageDependencyData: *mut std::ffi::c_void,
+    pub PackageDependencyData: *mut ffi::c_void,
     pub ProcessGroupId: u32,
     pub LoaderThreads: u32,
     pub RedirectionDllName: UNICODE_STRING,
@@ -138,7 +138,7 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
 #[repr(C)]
 pub struct CURDIR {
     pub DosPath: UNICODE_STRING,
-    pub Handle: *mut std::ffi::c_void,
+    pub Handle: *mut ffi::c_void,
 }
 
 #[repr(C)]

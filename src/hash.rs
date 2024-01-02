@@ -40,7 +40,8 @@ pub unsafe fn hash_ci_ptr(mut value: *const u8) -> u32 {
     hash
 }
 
-/// Generates a hash of a given string using same case, and ignoring the 2nd byte.
+/// Generates a hash of a given string using same case, and ignoring the 2nd
+/// byte.
 ///
 /// # Arguments
 ///

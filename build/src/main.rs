@@ -1,9 +1,9 @@
-pub mod string;
-pub mod import;
-
 use std::{fs::OpenOptions, io::Write};
 
 use crate::import::import_obfuscation_v1;
+
+pub mod import;
+pub mod string;
 
 fn main() {
     let path = r#"C:\Users\valaphee\Documents\wgpu\target\release\wgpu-examples.exe"#;
@@ -16,4 +16,3 @@ fn main() {
     import_obfuscation_v1(&mut mmap[..]);
     mmap.flush().unwrap();
 }
-
