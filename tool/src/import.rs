@@ -1,69 +1,14 @@
-extern crate core;
-
-use std::{fs::OpenOptions, io::Write};
-
+use std::io::Write;
 use byteorder::ReadBytesExt;
-use object::{
-    coff::CoffHeader,
-    pe::{
-        ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64, IMAGE_DIRECTORY_ENTRY_IAT,
-        IMAGE_DIRECTORY_ENTRY_IMPORT,
-    },
-    read::pe::ImageNtHeaders,
-    LittleEndian,
-};
+use object::coff::CoffHeader;
+use object::LittleEndian;
+use object::pe::{IMAGE_DIRECTORY_ENTRY_IAT, IMAGE_DIRECTORY_ENTRY_IMPORT, ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64};
+use object::read::pe::ImageNtHeaders;
 use rand::Rng;
-
 use serpent::hash::fnv1a_ci;
-use serpent::import::{get_function, get_module, HMODULE};
+use crate::string::string_obfuscation_v1;
 
-type LoadLibraryA = unsafe extern "system" fn(*const u8) -> usize;
-
-fn main() {
-    //let a = get_module(fnv1a_ci(b"advapi32.dll")).unwrap();
-    /*let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
-    let load_library_a: LoadLibraryA = unsafe {
-        std::mem::transmute(
-            get_function(
-                kernel32,
-                fnv1a_ci(b"LoadLibraryA"),
-            )
-                .unwrap(),
-        )
-    };
-    let a = unsafe {
-        load_library_a(b"advapi32.dll\0".as_ptr())
-    };
-    let b = unsafe {
-        load_library_a(b"cryptbase.dll\0".as_ptr())
-    };
-    println!("{}", b);
-    let b = unsafe { get_function(a as HMODULE, 0x1C21CE99).unwrap() };
-    return;*/
-
-    let path = r#"C:\Users\valaphee\Documents\wgpu\target\release\wgpu-examples.exe"#;
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .unwrap();
-    let mut mmap = unsafe { memmap2::MmapMut::map_mut(&file) }.unwrap();
-    //let mut mmap = std::fs::read(path).unwrap();
-    import_obfuscation_v1(&mut mmap[..]);
-    mmap.flush().unwrap();
-}
-
-fn string_obfuscation_v1(input: &str) -> Vec<u8> {
-    let mut value = input.as_bytes().to_vec();
-    let key = value[rand::thread_rng().gen_range(0..value.len())];
-    value.push(0);
-    for v in value.iter_mut() {
-        *v = *v ^ key
-    }
-    value
-}
-
-fn import_obfuscation_v1(in_place: &mut [u8]) {
+pub fn import_obfuscation_v1(in_place: &mut [u8]) {
     let mut replace = vec![0; 20];
     let mut wipe = vec![];
     let import_directory;
