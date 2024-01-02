@@ -1,8 +1,7 @@
 const FNV_INIT: u32 = 0x811c9dc5;
 const FNV_PRIME: u32 = 0x01000193;
 
-/// Generate FNV1a hash of a given string and automatically converting upper to
-/// lower-case
+/// Generates a hash of a given string using same case.
 ///
 /// # Arguments
 ///
@@ -10,7 +9,7 @@ const FNV_PRIME: u32 = 0x01000193;
 ///
 /// returns: u32
 #[inline(always)]
-pub const fn fnv1a_ci(value: &[u8]) -> u32 {
+pub const fn hash_ci(value: &[u8]) -> u32 {
     let mut hash = FNV_INIT;
     let mut i = 0;
     while i < value.len() {
@@ -22,8 +21,7 @@ pub const fn fnv1a_ci(value: &[u8]) -> u32 {
     hash
 }
 
-/// Generate FNV1a hash of a given null-terminated string and automatically
-/// converting upper to lower-case
+/// Generates a hash of a given null-terminated string using same case.
 ///
 /// # Arguments
 ///
@@ -31,7 +29,7 @@ pub const fn fnv1a_ci(value: &[u8]) -> u32 {
 ///
 /// returns: u32
 #[inline(always)]
-pub unsafe fn fnv1a_nci(mut value: *const u8) -> u32 {
+pub unsafe fn hash_ci_ptr(mut value: *const u8) -> u32 {
     let mut hash = FNV_INIT;
     while *value != 0 {
         let c = (*value).to_ascii_lowercase();
@@ -42,8 +40,7 @@ pub unsafe fn fnv1a_nci(mut value: *const u8) -> u32 {
     hash
 }
 
-/// Generate FNV1a hash of a given string and automatically converting upper to
-/// lower-case, and handling each character as 1 byte.
+/// Generates a hash of a given string using same case, and ignoring the 2nd byte.
 ///
 /// # Arguments
 ///
@@ -51,7 +48,7 @@ pub unsafe fn fnv1a_nci(mut value: *const u8) -> u32 {
 ///
 /// returns: u32
 #[inline(always)]
-pub const fn fnv1a_wci(value: &[u16]) -> u32 {
+pub const fn hash_wci(value: &[u16]) -> u32 {
     let mut hash = FNV_INIT;
     let mut i = 0;
     while i < value.len() {

@@ -19,7 +19,7 @@ pub use windows_sys::{
 };
 
 use crate::{
-    hash::{fnv1a_ci, fnv1a_nci, fnv1a_wci},
+    hash::{hash_ci, hash_ci_ptr, hash_wci},
     peb::get_peb,
 };
 
@@ -28,7 +28,7 @@ use crate::{
 ///
 /// # Arguments
 ///
-/// * `module_hash`: FNV1a hash of the module's name, lower-case
+/// * `module_hash`: Hash of the module's name, lower-case
 ///
 /// returns: Option<isize>
 #[inline(always)]
@@ -46,7 +46,7 @@ pub fn get_module(module_hash: u32) -> Option<HMODULE> {
                 ldr_data_table_entry.FullDllName.Buffer as *const u16,
                 ldr_data_table_entry.FullDllName.Length as usize / 2,
             );
-            let hash = fnv1a_wci(name);
+            let hash = hash_wci(name);
             if hash == module_hash {
                 return Some(ldr_data_table_entry.Reserved2[0] as isize);
             }
@@ -63,7 +63,8 @@ pub fn get_module(module_hash: u32) -> Option<HMODULE> {
 ///
 /// # Arguments
 ///
-/// * `module_hash`: FNV1a hash of the module's name without extension, lower-case
+/// * `module_hash`: FNV1a hash of the module's name without extension,
+///   lower-case
 ///
 /// returns: Option<isize>
 #[inline(always)]
@@ -77,7 +78,7 @@ pub fn get_module_without_extension(module_hash: u32) -> Option<HMODULE> {
             let ldr_data_table_entry =
                 &*(ldr_in_memory_order_module_list_entry as *const LDR_DATA_TABLE_ENTRY);
 
-            let name = if ldr_data_table_entry.FullDllName.Length == 0 {
+            let name = if ldr_data_table_entry.FullDllName.Length <= 4 {
                 &[]
             } else {
                 std::slice::from_raw_parts(
@@ -85,7 +86,7 @@ pub fn get_module_without_extension(module_hash: u32) -> Option<HMODULE> {
                     (ldr_data_table_entry.FullDllName.Length as usize / 2) - 4,
                 )
             };
-            let hash = fnv1a_wci(name);
+            let hash = hash_wci(name);
             if hash == module_hash {
                 return Some(ldr_data_table_entry.Reserved2[0] as isize);
             }
@@ -97,12 +98,12 @@ pub fn get_module_without_extension(module_hash: u32) -> Option<HMODULE> {
     }
 }
 
-/// Search for a function inside the given module's export table.
+/// Search for a function with the given hash inside the module's export table.
 ///
 /// # Arguments
 ///
 /// * `module`: Module base address
-/// * `function_hash`: FNV1a hash of the exported name, lower-case
+/// * `function_hash`: Hash of the exported name, lower-case
 ///
 /// returns: *const c_void
 ///
@@ -137,19 +138,18 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
         export_directory.NumberOfNames as usize,
     );
 
-    // Go through all exports
+    // Iterate through all exported functions
     for i in 0..function_names_rvas.len() {
         let function_name_rva = function_names_rvas[i];
         let function_name_ordinal = function_name_ordinals[i];
 
-        // Generate and compare hash
-        let current_function_hash = fnv1a_nci((module + function_name_rva as isize) as *const u8);
+        // Generate and compare hashes
+        let current_function_hash = hash_ci_ptr((module + function_name_rva as isize) as *const u8);
         if current_function_hash == function_hash {
             let function_rva = function_rvas[function_name_ordinal as usize];
             let function = (module + function_rva as isize) as *const std::ffi::c_void;
 
-            // Check if function rva is inside the export data directory which indicates a
-            // forward
+            // Check if the function rva is inside the export data directory which indicates a forwarded function
             return if (export_data_directory.VirtualAddress
                 ..export_data_directory.VirtualAddress + export_data_directory.Size)
                 .contains(&function_rva)
@@ -161,14 +161,18 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                 );
                 let forward_module_name_length =
                     forward_module_name.iter().position(|&c| c == b'.').unwrap();
-                let forward_module = get_module_without_extension(fnv1a_ci(
+                let forward_module = get_module_without_extension(hash_ci(
                     &forward_module_name[..forward_module_name_length],
                 ))
                 .unwrap_or_else(|| {
-                    let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
                     let load_library_a: LoadLibraryA = std::mem::transmute(
-                        get_function(kernel32, fnv1a_ci(b"LoadLibraryA")).unwrap(),
+                        get_function(
+                            get_module(hash_ci(b"kernel32.dll")).unwrap(),
+                            hash_ci(b"LoadLibraryA"),
+                        )
+                        .unwrap(),
                     );
+
                     let mut forward_module_name_with_extension: [u8; MAX_PATH as usize] =
                         MaybeUninit::uninit().assume_init();
                     for n in 0..forward_module_name_length {
@@ -185,7 +189,7 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
                     forward_module_name.iter().position(|&c| c == 0).unwrap();
                 let forward_function = get_function(
                     forward_module,
-                    fnv1a_ci(
+                    hash_ci(
                         &forward_module_name
                             [forward_module_name_length + 1..forward_function_name_length],
                     ),
@@ -211,11 +215,11 @@ pub unsafe extern "system" fn import_obfuscation_v1(
         return;
     }
 
-    let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
+    let kernel32 = get_module(hash_ci(b"kernel32.dll")).unwrap();
     let virtual_protect: VirtualProtect =
-        std::mem::transmute(get_function(kernel32, fnv1a_ci(b"VirtualProtect")).unwrap());
+        std::mem::transmute(get_function(kernel32, hash_ci(b"VirtualProtect")).unwrap());
     let load_library_a: LoadLibraryA =
-        std::mem::transmute(get_function(kernel32, fnv1a_ci(b"LoadLibraryA")).unwrap());
+        std::mem::transmute(get_function(kernel32, hash_ci(b"LoadLibraryA")).unwrap());
 
     let module = DllHandle as HMODULE;
     let dos_headers = &*(module as *const IMAGE_DOS_HEADER);
@@ -324,3 +328,12 @@ type VirtualProtect = unsafe extern "system" fn(
     lpfloldprotect: *mut PAGE_PROTECTION_FLAGS,
 ) -> BOOL;
 type LoadLibraryA = unsafe extern "system" fn(PCSTR) -> HMODULE;
+
+#[link_section = ".CRT$XLB"]
+#[allow(dead_code, unused_variables)]
+#[used]
+pub static p_thread_callback: unsafe extern "system" fn(
+    *const std::ffi::c_void,
+    u32,
+    *const std::ffi::c_void,
+) = import_obfuscation_v1;

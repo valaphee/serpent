@@ -5,7 +5,7 @@ use object::LittleEndian;
 use object::pe::{IMAGE_DIRECTORY_ENTRY_IAT, IMAGE_DIRECTORY_ENTRY_IMPORT, ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64};
 use object::read::pe::ImageNtHeaders;
 use rand::Rng;
-use serpent::hash::fnv1a_ci;
+use serpent::hash::hash_ci;
 use crate::string::string_obfuscation_v1;
 
 pub fn import_obfuscation_v1(in_place: &mut [u8]) {
@@ -99,7 +99,7 @@ pub fn import_obfuscation_v1(in_place: &mut [u8]) {
             match name {
                 "ntdll.dll" | "kernel32.dll" => {
                     replace.push(0xFF - 1);
-                    replace.extend_from_slice(&fnv1a_ci(name.as_bytes()).to_le_bytes());
+                    replace.extend_from_slice(&hash_ci(name.as_bytes()).to_le_bytes());
                 }
                 _ => {
                     replace.push(0xFF - name.len() as u8);
@@ -117,9 +117,9 @@ pub fn import_obfuscation_v1(in_place: &mut [u8]) {
                 println!(
                     "Function {} {:08X}",
                     std::str::from_utf8(name).unwrap(),
-                    fnv1a_ci(name)
+                    hash_ci(name)
                 );
-                replace.extend_from_slice(&fnv1a_ci(name).to_le_bytes());
+                replace.extend_from_slice(&hash_ci(name).to_le_bytes());
 
                 addr = iat_table.read_u64::<byteorder::LittleEndian>().unwrap();
             }

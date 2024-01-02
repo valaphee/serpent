@@ -19,5 +19,5 @@ windows-sys = { version = "0.52", features = [
 [workspace]
 resolver = "2"
 members = [
-    "tool"
+    "build"
 ]

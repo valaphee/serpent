@@ -1,5 +1,5 @@
 [package]
-name = "serpent_app"
+name = "serpent_build"
 version = "0.1.0"
 edition = "2021"
 
