@@ -1,17 +1,17 @@
 extern crate core;
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::ops::Range;
-use byteorder::ReadBytesExt;
+use std::{fs::OpenOptions, io::Write};
 
-use object::coff::CoffHeader;
-use object::pe::{
-    ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64, IMAGE_DIRECTORY_ENTRY_IAT,
-    IMAGE_DIRECTORY_ENTRY_IMPORT,
+use byteorder::ReadBytesExt;
+use object::{
+    coff::CoffHeader,
+    pe::{
+        ImageDosHeader, ImageImportDescriptor, ImageNtHeaders64, IMAGE_DIRECTORY_ENTRY_IAT,
+        IMAGE_DIRECTORY_ENTRY_IMPORT,
+    },
+    read::pe::ImageNtHeaders,
+    LittleEndian,
 };
-use object::read::pe::ImageNtHeaders;
-use object::LittleEndian;
 use rand::Rng;
 
 use serpent::hash::fnv1a_ci;
@@ -92,7 +92,8 @@ fn import_obfuscation_v1(in_place: &mut [u8]) {
             &*((&input[import_directory.0 as usize..][..import_directory.1 as usize]).as_ptr()
                 as *const _)
         };
-        let mut iat_table = &input[import_address_table_directory.0 as usize..][..import_address_table_directory.1 as usize];
+        let mut iat_table = &input[import_address_table_directory.0 as usize..]
+            [..import_address_table_directory.1 as usize];
         let mut lap_ranges: Vec<(usize, &str)> = Vec::new();
 
         while !import_descriptor.is_null() {
@@ -129,8 +130,9 @@ fn import_obfuscation_v1(in_place: &mut [u8]) {
                     .position(|&c| c == 0)
                     .unwrap();
                 let name = &input[name_offset + 2..][..name_length];
-                //println!("Function {} {:08X}", std::str::from_utf8(name).unwrap(), fnv1a_ci(name));
-                //replace.extend_from_slice(&fnv1a_ci(name).to_le_bytes());
+                //println!("Function {} {:08X}", std::str::from_utf8(name).unwrap(),
+                // fnv1a_ci(name)); replace.extend_from_slice(&fnv1a_ci(name).
+                // to_le_bytes());
                 wipe.push(name_offset..name_offset + name_length + 3);
 
                 thunk = unsafe { &*(thunk as *const u64).add(1) };
@@ -143,7 +145,10 @@ fn import_obfuscation_v1(in_place: &mut [u8]) {
 
         while !iat_table.is_empty() {
             let mut addr = iat_table.read_u64::<byteorder::LittleEndian>().unwrap();
-            let lap_range = lap_ranges.iter().find(|&lap_range| lap_range.0 == addr as usize).unwrap();
+            let lap_range = lap_ranges
+                .iter()
+                .find(|&lap_range| lap_range.0 == addr as usize)
+                .unwrap();
             let name = lap_range.1;
             println!("Module {}", name);
             match name {
@@ -164,7 +169,11 @@ fn import_obfuscation_v1(in_place: &mut [u8]) {
                     .position(|&c| c == 0)
                     .unwrap();
                 let name = &input[name_offset + 2..][..name_length];
-                println!("Function {} {:08X}", std::str::from_utf8(name).unwrap(), fnv1a_ci(name));
+                println!(
+                    "Function {} {:08X}",
+                    std::str::from_utf8(name).unwrap(),
+                    fnv1a_ci(name)
+                );
                 replace.extend_from_slice(&fnv1a_ci(name).to_le_bytes());
 
                 addr = iat_table.read_u64::<byteorder::LittleEndian>().unwrap();

@@ -1,8 +1,12 @@
 use std::arch::asm;
 
-use windows_sys::Win32::Foundation::UNICODE_STRING;
-use windows_sys::Win32::System::Kernel::STRING;
-use windows_sys::Win32::System::Threading::{PEB_LDR_DATA, PPS_POST_PROCESS_INIT_ROUTINE};
+use windows_sys::Win32::{
+    Foundation::UNICODE_STRING,
+    System::{
+        Kernel::STRING,
+        Threading::{PEB_LDR_DATA, PPS_POST_PROCESS_INIT_ROUTINE},
+    },
+};
 
 /// Returns a reference to the PEB.
 ///
@@ -12,15 +16,15 @@ pub fn get_peb() -> &'static PEB {
         let peb: *const PEB;
         #[cfg(target_arch = "x86")]
         asm!(
-            "mov {}, fs:[0x30]",
-            lateout(reg) peb,
-            options(pure, nomem, preserves_flags, nostack),
+        "mov {}, fs:[0x30]",
+        lateout(reg) peb,
+        options(pure, nomem, preserves_flags, nostack),
         );
         #[cfg(target_arch = "x86_64")]
         asm!(
-            "mov {}, gs:[0x60]",
-            lateout(reg) peb,
-            options(pure, nomem, preserves_flags, nostack),
+        "mov {}, gs:[0x60]",
+        lateout(reg) peb,
+        options(pure, nomem, preserves_flags, nostack),
         );
         &*peb
     }

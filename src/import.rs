@@ -1,25 +1,27 @@
-use std::intrinsics::volatile_load;
-use std::io::Read;
-use std::io::Write;
-use std::mem::MaybeUninit;
+use std::{intrinsics::volatile_load, mem::MaybeUninit};
 
-pub use windows_sys::Win32::Foundation::{HMODULE};
 use byteorder::{LittleEndian, ReadBytesExt};
-use windows_sys::core::PCSTR;
-use windows_sys::Win32::Foundation::{BOOL, MAX_PATH};
-use windows_sys::Win32::System::Diagnostics::Debug::{
-    IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_DIRECTORY_ENTRY_IAT,
-    IMAGE_DIRECTORY_ENTRY_IMPORT,
+pub use windows_sys::{
+    core::PCSTR,
+    Win32::{
+        Foundation::{BOOL, HMODULE, MAX_PATH},
+        System::{
+            Diagnostics::Debug::{
+                IMAGE_DATA_DIRECTORY, IMAGE_DIRECTORY_ENTRY_EXPORT, IMAGE_DIRECTORY_ENTRY_IAT,
+                IMAGE_DIRECTORY_ENTRY_IMPORT,
+            },
+            Kernel::LIST_ENTRY,
+            Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE},
+            SystemServices::{DLL_PROCESS_ATTACH, IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY},
+            WindowsProgramming::LDR_DATA_TABLE_ENTRY,
+        },
+    },
 };
-use windows_sys::Win32::System::Kernel::LIST_ENTRY;
-use windows_sys::Win32::System::Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE};
-use windows_sys::Win32::System::SystemServices::{
-    DLL_PROCESS_ATTACH, IMAGE_DOS_HEADER, IMAGE_EXPORT_DIRECTORY,
-};
-use windows_sys::Win32::System::WindowsProgramming::LDR_DATA_TABLE_ENTRY;
 
-use crate::hash::{fnv1a_ci, fnv1a_wci};
-use crate::peb::get_peb;
+use crate::{
+    hash::{fnv1a_ci, fnv1a_nci, fnv1a_wci},
+    peb::get_peb,
+};
 
 /// Search for a module with the given hash by using the PEB's LDR
 /// InMemoryOrderModuleList and hashing the FullDllName.
@@ -122,84 +124,77 @@ pub unsafe fn get_function(module: HMODULE, function_hash: u32) -> Option<*const
     let export_directory = &*((module + export_data_directory.VirtualAddress as isize)
         as *const IMAGE_EXPORT_DIRECTORY);
 
-    let functions = std::slice::from_raw_parts(
+    let function_rvas = std::slice::from_raw_parts(
         (module + export_directory.AddressOfFunctions as isize) as *const u32,
         export_directory.NumberOfFunctions as usize,
     );
-    let names = std::slice::from_raw_parts(
+    let function_names_rvas = std::slice::from_raw_parts(
         (module + export_directory.AddressOfNames as isize) as *const u32,
         export_directory.NumberOfNames as usize,
     );
-    let name_ordinals = std::slice::from_raw_parts(
+    let function_name_ordinals = std::slice::from_raw_parts(
         (module + export_directory.AddressOfNameOrdinals as isize) as *const u16,
         export_directory.NumberOfNames as usize,
     );
 
     // Go through all exports
-    for i in 0..names.len() {
-        let name = names[i];
-        let name_ordinal = name_ordinals[i];
-    /*for (&name, &name_ordinal) in names.iter().zip(name_ordinals) {*/
-        let name = (module + name as isize) as *const u8;
-        let mut name_end = name;
-        while *name_end != 0 {
-            name_end = name_end.add(1)
-        }
-        let name_length = name_end.offset_from(name) as usize;
+    for i in 0..function_names_rvas.len() {
+        let function_name_rva = function_names_rvas[i];
+        let function_name_ordinal = function_name_ordinals[i];
 
         // Generate and compare hash
-        let name = std::slice::from_raw_parts(name, name_length);
-        let hash = fnv1a_ci(name);
-        if hash == function_hash {
-            let function_rva = functions[name_ordinal as usize];
+        let current_function_hash = fnv1a_nci((module + function_name_rva as isize) as *const u8);
+        if current_function_hash == function_hash {
+            let function_rva = function_rvas[function_name_ordinal as usize];
             let function = (module + function_rva as isize) as *const std::ffi::c_void;
 
-            // Check if function rva is inside the export data directory which indicates a forward
-            if function_rva >= export_data_directory.VirtualAddress
-                && function_rva < export_data_directory.VirtualAddress + export_data_directory.Size
+            // Check if function rva is inside the export data directory which indicates a
+            // forward
+            return if (export_data_directory.VirtualAddress
+                ..export_data_directory.VirtualAddress + export_data_directory.Size)
+                .contains(&function_rva)
             {
-                let mut function = std::slice::from_raw_parts(
+                let mut forward_module_name = std::slice::from_raw_parts(
                     function as *const u8,
                     (function_rva - export_data_directory.VirtualAddress
                         + export_data_directory.Size) as usize,
                 );
-                let forward_module_name_length = function.iter().position(|&c| c == b'.').unwrap();
-
-                let forward_module =
-                    get_module_without_extension(fnv1a_ci(&function[..forward_module_name_length]))
-                        .unwrap_or_else(|| {
-                            let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
-                            let load_library_a: LoadLibraryA = std::mem::transmute(
-                                get_function(
-                                    kernel32,
-                                    fnv1a_ci(b"LoadLibraryA"),
-                                )
-                                    .unwrap(),
-                            );
-                            let mut constformat: [u8; MAX_PATH as usize] = MaybeUninit::uninit().assume_init();
-                            for n in 0..forward_module_name_length {
-                                constformat[n] = function[n];
-                            }
-                            constformat[forward_module_name_length] = b'.';
-                            constformat[forward_module_name_length+1] = b'd';
-                            constformat[forward_module_name_length+2] = b'l';
-                            constformat[forward_module_name_length+3] = b'l';
-                            //write!(constformat.as_mut_slice(), "{}.dll\0", std::str::from_utf8(&function[..forward_module_name_length]).unwrap()).unwrap();
-                            load_library_a(constformat.as_ptr())
-                        });
-                //println!("{} {forward_module}", std::str::from_utf8(&function[..forward_module_name_length + 1]).unwrap());
-                let forward_function_name_length = function.iter().position(|&c| c == 0).unwrap();
+                let forward_module_name_length =
+                    forward_module_name.iter().position(|&c| c == b'.').unwrap();
+                let forward_module = get_module_without_extension(fnv1a_ci(
+                    &forward_module_name[..forward_module_name_length],
+                ))
+                .unwrap_or_else(|| {
+                    let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
+                    let load_library_a: LoadLibraryA = std::mem::transmute(
+                        get_function(kernel32, fnv1a_ci(b"LoadLibraryA")).unwrap(),
+                    );
+                    let mut forward_module_name_with_extension: [u8; MAX_PATH as usize] =
+                        MaybeUninit::uninit().assume_init();
+                    for n in 0..forward_module_name_length {
+                        forward_module_name_with_extension[n] = forward_module_name[n];
+                    }
+                    forward_module_name_with_extension[forward_module_name_length] = b'.';
+                    forward_module_name_with_extension[forward_module_name_length + 1] = b'd';
+                    forward_module_name_with_extension[forward_module_name_length + 2] = b'l';
+                    forward_module_name_with_extension[forward_module_name_length + 3] = b'l';
+                    forward_module_name_with_extension[forward_module_name_length + 4] = b'\0';
+                    load_library_a(forward_module_name_with_extension.as_ptr())
+                });
+                let forward_function_name_length =
+                    forward_module_name.iter().position(|&c| c == 0).unwrap();
                 let forward_function = get_function(
                     forward_module,
                     fnv1a_ci(
-                        &function[forward_module_name_length + 1..forward_function_name_length],
+                        &forward_module_name
+                            [forward_module_name_length + 1..forward_function_name_length],
                     ),
                 )
-                    .unwrap();
-                return Some(forward_function);
+                .unwrap();
+                Some(forward_function)
             } else {
-                return Some(function);
-            }
+                Some(function)
+            };
         }
     }
 
@@ -217,20 +212,10 @@ pub unsafe extern "system" fn import_obfuscation_v1(
     }
 
     let kernel32 = get_module(fnv1a_ci(b"kernel32.dll")).unwrap();
-    let virtual_protect: VirtualProtect = std::mem::transmute(
-        get_function(
-            kernel32,
-            fnv1a_ci(b"VirtualProtect"),
-        )
-        .unwrap(),
-    );
-    let load_library_a: LoadLibraryA = std::mem::transmute(
-        get_function(
-            kernel32,
-            fnv1a_ci(b"LoadLibraryA"),
-        )
-        .unwrap(),
-    );
+    let virtual_protect: VirtualProtect =
+        std::mem::transmute(get_function(kernel32, fnv1a_ci(b"VirtualProtect")).unwrap());
+    let load_library_a: LoadLibraryA =
+        std::mem::transmute(get_function(kernel32, fnv1a_ci(b"LoadLibraryA")).unwrap());
 
     let module = DllHandle as HMODULE;
     let dos_headers = &*(module as *const IMAGE_DOS_HEADER);
